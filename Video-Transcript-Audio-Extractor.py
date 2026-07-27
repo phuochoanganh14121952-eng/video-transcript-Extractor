@@ -7,8 +7,6 @@ import streamlit as st
 import whisper
 from google import genai
 from moviepy.editor import VideoFileClip, AudioFileClip
-from pydub import AudioSegment
-
 st.set_page_config(page_title="Video Transcript & AI Companion", layout="wide")
 
 DB_FILE = "history_db.json"
