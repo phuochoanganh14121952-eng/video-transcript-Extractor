@@ -1,6 +1,5 @@
 streamlit
-git+https://github.com/openai/whisper.git
+openai-whisper
 google-genai
 moviepy<2.0.0
 pydub
-pyaudioop
