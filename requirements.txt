@@ -3,3 +3,4 @@ git+https://github.com/openai/whisper.git
 google-genai
 moviepy<2.0.0
 pydub
+pyaudioop
