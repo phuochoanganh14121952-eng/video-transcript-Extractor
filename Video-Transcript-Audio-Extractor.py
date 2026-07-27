@@ -2,6 +2,8 @@ import os
 import io
 import json
 import zipfile
+import tempfile
+from pydub import AudioSegment
 import streamlit as st
 from faster_whisper import WhisperModel
 from google import genai
