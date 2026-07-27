@@ -126,8 +126,8 @@ if not api_key:
 
 @st.cache_resource
 def load_whisper_model(model_size):
-    return whisper.load_model(model_size)
-
+    return WhisperModel(model_size, device="cpu", compute_type="int8")
+  
 client = genai.Client(api_key=api_key)
 
 # Màn hình Xem bài từ Lịch sử
