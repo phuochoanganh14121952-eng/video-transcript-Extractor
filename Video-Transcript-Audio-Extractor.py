@@ -3,7 +3,6 @@ import io
 import json
 import zipfile
 import tempfile
-from pydub import AudioSegment
 import streamlit as st
 from faster_whisper import WhisperModel
 from google import genai
@@ -388,20 +387,29 @@ Trả về duy nhất một JSON định dạng:
                 res_json = json.loads(raw_text.strip())
 
             with st.spinner("4/4. Cắt & Lưu âm thanh từng đoạn..."):
-                full_audio = AudioSegment.from_wav(wav_path)
-                total_duration_ms = len(full_audio)
-                seg_map = {f"{id}": s for id, s in enumerate(raw_segments)}
-                final_data = []
+            full_audio = AudioFileClip(wav_path)
+            seg_map = {f"{id}": s for id, s in enumerate(raw_segments)}
+            final_data = []
 
-                for idx, group in enumerate(res_json.get("grouped_data", [])):
-                    s_id = group.get("start_id")
-                    e_id = group.get("end_id")
+            for idx, group in enumerate(res_json.get("grouped_data", [])):
+                s_id = group.get("start_id")
+                e_id = group.get("end_id")
 
-                    if str(s_id) in seg_map and str(e_id) in seg_map:
-                        start_ms = max(0, int(seg_map[str(s_id)]["start"] * 1000) - 20)
-                        end_ms = min(total_duration_ms, int(seg_map[str(e_id)]["end"] * 1000) + 20)
+                if str(s_id) in seg_map and str(e_id) in seg_map:
+                    start_sec = max(0, seg_map[str(s_id)]["start"] - 0.02)
+                    end_sec = min(full_audio.duration, seg_map[str(e_id)]["end"] + 0.02)
 
-                        chunk = full_audio[start_ms:end_ms]
+                    audio_save_path = os.path.join(MEDIA_DIR, f"{item_id}_chunk_{idx}.wav")
+                    chunk = full_audio.subclip(start_sec, end_sec)
+                    chunk.write_audiofile(audio_save_path, logger=None)
+
+                    final_data.append({
+                        "speaker": group.get("speaker", "Speaker"),
+                        "english": group.get("english", ""),
+                        "vietnamese": group.get("vietnamese", ""),
+                        "audio_path": audio_save_path
+                    })
+            full_audio.close()
                         audio_save_path = os.path.join(MEDIA_DIR, f"{item_id}_chunk_{idx}.wav")
                         chunk.export(audio_save_path, format="wav")
 
