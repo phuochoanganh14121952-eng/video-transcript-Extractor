@@ -3,3 +3,4 @@ faster-whisper
 google-genai
 moviepy<2.0.0
 pydub
+pyaudioop
