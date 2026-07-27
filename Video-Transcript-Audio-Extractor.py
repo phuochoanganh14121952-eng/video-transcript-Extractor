@@ -140,7 +140,6 @@ if st.session_state['current_view'] is not None:
     with col_v1:
         st.info(f"📌 Đang xem bài: **{view_data['title']}**")
     with col_v2:
-        # TẠO FILE ZIP ĐỂ CHIA SẺ
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             meta_data = {
@@ -179,7 +178,6 @@ if st.session_state['current_view'] is not None:
             mime="application/zip"
         )
 
-    # Hiển thị lại Media gốc
     media_path = view_data.get("media_path", "")
     if media_path and os.path.exists(media_path):
         if view_data.get("file_type", "").startswith("video"):
@@ -187,7 +185,6 @@ if st.session_state['current_view'] is not None:
         else:
             st.audio(media_path)
 
-    # Tóm tắt
     st.divider()
     st.subheader("📝 Tóm tắt hội thoại (Song ngữ)")
     c1, c2 = st.columns(2)
@@ -198,7 +195,6 @@ if st.session_state['current_view'] is not None:
         st.markdown("**🇻🇳 Tiếng Việt:**")
         st.write(view_data.get("summary_vi", ""))
 
-    # Bảng thoại
     st.divider()
     st.subheader("🔊 Trích xuất thoại & Bảng âm thanh thực hành")
     for item in view_data.get('data', []):
@@ -216,7 +212,6 @@ if st.session_state['current_view'] is not None:
             else:
                 st.caption("Không tìm thấy âm thanh")
 
-    # AI Companion
     st.divider()
     st.subheader("💬 AI Companion (Trợ lý hỏi đáp)")
     for msg in st.session_state['chat_messages']:
@@ -345,14 +340,14 @@ if uploaded_file:
                 ]
 
             with st.spinner("3/4. Gemini đang gộp lượt nói, tóm tắt & dịch thuật..."):
-                transcript_text = "\n".join([f"[{s['start']:.2f}s - {s['end']:.2f}s]: {s['text'].strip()}" for ss in raw_segments])
+                transcript_text = "\n".join([f"[{s['start']:.2f}s - {s['end']:.2f}s]: {s['text'].strip()}" for s in raw_segments])
 
                 prompt = f"""
 Dưới đây là danh sách các câu thoại kèm mốc thời gian:
 {transcript_text}
 
 Nhiệm vụ:
-1. Gộp các câu thoại liên tiếp của CÙNG MỘT NGƯỜI NÓI (Check-in Agent / Passenger) thành 1 lượt nói.
+1. Gộp các câu thoại liên tiếp của CÙNG MỘT NGƯỜI NÓI thành 1 lượt nói.
 2. Tóm tắt nội dung chính bài hội thoại bằng cả tiếng Anh và tiếng Việt.
 
 Trả về duy nhất một JSON định dạng:
@@ -361,7 +356,7 @@ Trả về duy nhất một JSON định dạng:
   "summary_vi": "Tóm tắt ngắn gọn bài hội thoại bằng tiếng Việt",
   "grouped_data": [
     {{
-      "speaker": "Check-in Agent",
+      "speaker": "Speaker Name",
       "start_id": 0,
       "end_id": 2,
       "english": "Văn bản tiếng Anh lượt nói",
@@ -387,31 +382,21 @@ Trả về duy nhất một JSON định dạng:
                 res_json = json.loads(raw_text.strip())
 
             with st.spinner("4/4. Cắt & Lưu âm thanh từng đoạn..."):
-            full_audio = AudioFileClip(wav_path)
-            seg_map = {f"{id}": s for id, s in enumerate(raw_segments)}
-            final_data = []
+                full_audio = AudioFileClip(wav_path)
+                seg_map = {f"{id}": s for id, s in enumerate(raw_segments)}
+                final_data = []
 
-            for idx, group in enumerate(res_json.get("grouped_data", [])):
-                s_id = group.get("start_id")
-                e_id = group.get("end_id")
+                for idx, group in enumerate(res_json.get("grouped_data", [])):
+                    s_id = group.get("start_id")
+                    e_id = group.get("end_id")
 
-                if str(s_id) in seg_map and str(e_id) in seg_map:
-                    start_sec = max(0, seg_map[str(s_id)]["start"] - 0.02)
-                    end_sec = min(full_audio.duration, seg_map[str(e_id)]["end"] + 0.02)
+                    if str(s_id) in seg_map and str(e_id) in seg_map:
+                        start_sec = max(0, seg_map[str(s_id)]["start"] - 0.02)
+                        end_sec = min(full_audio.duration, seg_map[str(e_id)]["end"] + 0.02)
 
-                    audio_save_path = os.path.join(MEDIA_DIR, f"{item_id}_chunk_{idx}.wav")
-                    chunk = full_audio.subclip(start_sec, end_sec)
-                    chunk.write_audiofile(audio_save_path, logger=None)
-
-                    final_data.append({
-                        "speaker": group.get("speaker", "Speaker"),
-                        "english": group.get("english", ""),
-                        "vietnamese": group.get("vietnamese", ""),
-                        "audio_path": audio_save_path
-                    })
-            full_audio.close()
                         audio_save_path = os.path.join(MEDIA_DIR, f"{item_id}_chunk_{idx}.wav")
-                        chunk.export(audio_save_path, format="wav")
+                        chunk = full_audio.subclip(start_sec, end_sec)
+                        chunk.write_audiofile(audio_save_path, logger=None)
 
                         final_data.append({
                             "speaker": group.get("speaker", "Speaker"),
@@ -419,6 +404,7 @@ Trả về duy nhất một JSON định dạng:
                             "vietnamese": group.get("vietnamese", ""),
                             "audio_path": audio_save_path
                         })
+                full_audio.close()
 
                 new_item = {
                     "id": item_id,
