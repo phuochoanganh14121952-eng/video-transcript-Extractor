@@ -130,54 +130,49 @@ if not api_key:
 def load_whisper_model(model_size):
     return WhisperModel(model_size, device="cpu", compute_type="int8")
 
-client = genai.Client(api_key=api_key)
+with col_v2:
+        def make_zip():
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                meta_data = {
+                    "id": view_data.get("id"),
+                    "title": view_data.get("title"),
+                    "file_type": view_data.get("file_type"),
+                    "summary_en": view_data.get("summary_en"),
+                    "summary_vi": view_data.get("summary_vi"),
+                    "chat_history": view_data.get("chat_history", []),
+                    "media_filename": os.path.basename(view_data.get("media_path", "")),
+                    "data": [
+                        {
+                            "speaker": r.get("speaker"),
+                            "english": r.get("english"),
+                            "vietnamese": r.get("vietnamese"),
+                            "audio_filename": os.path.basename(r.get("audio_path", ""))
+                        }
+                        for r in view_data.get("data", [])
+                    ]
+                }
+                zip_file.writestr("lesson.json", json.dumps(meta_data, ensure_ascii=False, indent=2))
 
-# Màn hình Xem bài từ Lịch sử
-if st.session_state['current_view'] is not None:
-    view_data = st.session_state['current_view']
+                m_path = view_data.get("media_path", "")
+                if m_path and os.path.exists(m_path):
+                    zip_file.write(m_path, arcname=os.path.basename(m_path))
 
-    col_v1, col_v2 = st.columns([3, 1])
-    with col_v1:
-        st.info(f"📌 Đang xem bài: **{view_data['title']}**")
-    with col_v2:
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            meta_data = {
-                "id": view_data.get("id"),
-                "title": view_data.get("title"),
-                "file_type": view_data.get("file_type"),
-                "summary_en": view_data.get("summary_en"),
-                "summary_vi": view_data.get("summary_vi"),
-                "chat_history": view_data.get("chat_history", []),
-                "media_filename": os.path.basename(view_data.get("media_path", "")),
-                "data": [
-                    {
-                        "speaker": r.get("speaker"),
-                        "english": r.get("english"),
-                        "vietnamese": r.get("vietnamese"),
-                        "audio_filename": os.path.basename(r.get("audio_path", ""))
-                    }
-                    for r in view_data.get("data", [])
-                ]
-            }
-            zip_file.writestr("lesson.json", json.dumps(meta_data, ensure_ascii=False, indent=2))
+                for r in view_data.get("data", []):
+                    a_p = r.get("audio_path", "")
+                    if a_p and os.path.exists(a_p):
+                        zip_file.write(a_p, arcname=os.path.basename(a_p))
 
-            m_path = view_data.get("media_path", "")
-            if m_path and os.path.exists(m_path):
-                zip_file.write(m_path, arcname=os.path.basename(m_path))
-
-            for r in view_data.get("data", []):
-                a_p = r.get("audio_path", "")
-                if a_p and os.path.exists(a_p):
-                    zip_file.write(a_p, arcname=os.path.basename(a_p))
+            return zip_buffer.getvalue()
 
         st.download_button(
             label="📦 Xuất / Chia sẻ Bài học (.zip)",
-            data=zip_buffer.getvalue(),
+            data=make_zip(),
             file_name=f"{view_data['title']}_package.zip",
-            mime="application/zip"
+            mime="application/zip",
+            key=f"dl_btn_{view_data.get('id')}"
         )
-
+       
     media_path = view_data.get("media_path", "")
     if media_path and os.path.exists(media_path):
         if view_data.get("file_type", "").startswith("video"):
