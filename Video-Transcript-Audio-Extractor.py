@@ -4,7 +4,7 @@ import json
 import tempfile
 import zipfile
 import streamlit as st
-import whisper
+from faster_whisper import WhisperModel
 from google import genai
 from moviepy.editor import VideoFileClip, AudioFileClip
 st.set_page_config(page_title="Video Transcript & AI Companion", layout="wide")
