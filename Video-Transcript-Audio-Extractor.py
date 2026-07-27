@@ -324,15 +324,22 @@ if uploaded_file:
 
             with st.spinner(f"2/4. Whisper ({whisper_model_size}) đang phân tích mốc thời gian..."):
                 model = load_whisper_model(whisper_model_size)
-                raw_result = model.transcribe(
-                    wav_path, 
-                    language="en", 
-                    condition_on_previous_text=False,
-                    word_timestamps=True,
-                    no_speech_threshold=0.6,
-                    temperature=0.0
-                )
-                raw_segments = raw_result.get("segments", [])
+                   segments, info = model.transcribe(
+                wav_path,
+                language="en",
+                word_timestamps=True,
+                no_speech_threshold=0.6,
+                temperature=0.0
+            )
+                       raw_segments = [
+                {
+                    "start": seg.start,
+                    "end": seg.end,
+                    "text": seg.text,
+                    "words": [{"start": w.start, "end": w.end, "word": w.word} for w in seg.words] if seg.words else []
+                }
+                        for seg in segments:
+                        ]
 
             with st.spinner("3/4. Gemini đang gộp lượt nói, tóm tắt & dịch thuật..."):
                 transcript_text = "\n".join([f"[{s['id']}] ({s['start']:.2f}s - {s['end']:.2f}s): {s['text'].strip()}" for s in raw_segments])
