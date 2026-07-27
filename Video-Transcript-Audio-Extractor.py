@@ -130,7 +130,16 @@ if not api_key:
 def load_whisper_model(model_size):
     return WhisperModel(model_size, device="cpu", compute_type="int8")
 
-with col_v2:
+client = genai.Client(api_key=api_key)
+
+# Màn hình Xem bài từ Lịch sử
+if st.session_state['current_view'] is not None:
+    view_data = st.session_state['current_view']
+
+    col_v1, col_v2 = st.columns([3, 1])
+    with col_v1:
+        st.info(f"📌 Đang xem bài: **{view_data['title']}**")
+    with col_v2:
         def make_zip():
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
@@ -172,7 +181,7 @@ with col_v2:
             mime="application/zip",
             key=f"dl_btn_{view_data.get('id')}"
         )
-       
+
     media_path = view_data.get("media_path", "")
     if media_path and os.path.exists(media_path):
         if view_data.get("file_type", "").startswith("video"):
