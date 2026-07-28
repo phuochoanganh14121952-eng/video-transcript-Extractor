@@ -55,10 +55,16 @@ if 'history' not in st.session_state:
     st.session_state['history'] = load_history_from_disk()
 
 if 'current_view' not in st.session_state:
-    st.session_state['current_view'] = None
+    if st.session_state['history']:
+        st.session_state['current_view'] = st.session_state['history'][-1]
+    else:
+        st.session_state['current_view'] = None
 
 if 'chat_messages' not in st.session_state:
-    st.session_state['chat_messages'] = []
+    if st.session_state['current_view']:
+        st.session_state['chat_messages'] = st.session_state['current_view'].get('chat_history', [])
+    else:
+        st.session_state['chat_messages'] = []
 
 st.title("🎬 Video Transcript & AI Companion")
 st.caption("Trích xuất âm thanh, tóm tắt song ngữ & Trợ lý học tập thông minh")
@@ -71,7 +77,7 @@ with st.sidebar:
     st.divider()
     st.header("📜 Lịch sử bài học")
 
-    if st.button("➕ Tạo bài mới (Reset)"):
+    if st.button("➕ Tạo bài mới / Tải file"):
         st.session_state['current_view'] = None
         st.session_state['chat_messages'] = []
         st.rerun()
@@ -109,6 +115,8 @@ with st.sidebar:
 
                     st.session_state['history'].pop(idx)
                     save_history_to_disk(st.session_state['history'])
+                    if st.session_state['history']:
+                        st.session_state['current_view'] = st.session_state['history'][-1]
                     st.rerun()
 
     st.divider()
@@ -118,8 +126,12 @@ with st.sidebar:
         st.session_state['chat_messages'] = []
         if os.path.exists(DB_FILE):
             os.remove(DB_FILE)
-        for f in os.listdir(MEDIA_DIR):
-            os.remove(os.path.join(MEDIA_DIR, f))
+        if os.path.exists(MEDIA_DIR):
+            for f in os.listdir(MEDIA_DIR):
+                try:
+                    os.remove(os.path.join(MEDIA_DIR, f))
+                except Exception:
+                    pass
         st.rerun()
 
 if not api_key:
@@ -132,13 +144,16 @@ def load_whisper_model(model_size):
 
 client = genai.Client(api_key=api_key)
 
-# Màn hình Xem bài từ Lịch sử
+# ---------------------------------------------------------
+# MÀN HÌNH 1: HIỂN THỊ BÀI HỌC KHI ĐÃ CHỌN HOẶC MỞ LẠI APP
+# ---------------------------------------------------------
 if st.session_state['current_view'] is not None:
     view_data = st.session_state['current_view']
 
     col_v1, col_v2 = st.columns([3, 1])
     with col_v1:
         st.info(f"📌 Đang xem bài: **{view_data['title']}**")
+
     with col_v2:
         def make_zip():
             zip_buffer = io.BytesIO()
@@ -175,7 +190,7 @@ if st.session_state['current_view'] is not None:
             return zip_buffer.getvalue()
 
         st.download_button(
-            label="📦 Xuất / Chia sẻ Bài học (.zip)",
+            label="📦 Xuất Zip bài học này",
             data=make_zip(),
             file_name=f"{view_data['title']}_package.zip",
             mime="application/zip",
@@ -238,9 +253,10 @@ if st.session_state['current_view'] is not None:
 
     st.stop()
 
-
-# Màn hình chính: Tải file Mới hoặc Nhập gói bài học
-st.subheader("📥 Nhập bài học được chia sẻ (.zip)")
+# ---------------------------------------------------------
+# MÀN HÌNH 2: TẢI FILE MỚI HOẶC NHẬP FILE ZIP CHIA SẺ
+# ---------------------------------------------------------
+st.subheader("📥 Nhập bài học từ file (.zip)")
 shared_zip = st.file_uploader("Tải lên file bài học có đuôi .zip", type=["zip"], key="zip_import")
 
 if shared_zip:
@@ -284,7 +300,7 @@ if shared_zip:
                 st.rerun()
 
 st.divider()
-st.subheader("📤 Hoặc Xử lý bài mới từ Video/Audio gốc")
+st.subheader("📤 Xử lý bài mới từ Video/Audio gốc")
 uploaded_file = st.file_uploader(
     "Tải lên file Video hoặc Audio (MP4, MP3, WAV, MOV):",
     type=["mp4", "mp3", "wav", "mov"],
