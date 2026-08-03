@@ -1,444 +1,302 @@
 import os
-import io
 import json
-import zipfile
-import tempfile
 import streamlit as st
-from faster_whisper import WhisperModel
+import whisper
 from google import genai
-from moviepy.editor import VideoFileClip, AudioFileClip
+from google.genai import types
 
-st.set_page_config(page_title="Video Transcript & AI Companion", layout="wide")
+st.set_page_config(page_title="Video_Transcript", layout="wide")
 
-MEDIA_DIR = "saved_media"
-DB_FILE = "history_db.json"
+HISTORY_FILE = "video_transcript_history.json"
 
-if not os.path.exists(MEDIA_DIR):
-    os.makedirs(MEDIA_DIR)
+def save_history_to_disk(history_data):
+    try:
+        light_history = []
+        for item in history_data:
+            light_item = {
+                "title": item.get("title"),
+                "filename": item.get("filename"),
+                "summary_en": item.get("summary_en"),
+                "summary_vi": item.get("summary_vi"),
+                "chat_messages": item.get("chat_messages", []),
+                "segments": item.get("segments", [])
+            }
+            light_history.append(light_item)
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(light_history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def load_history_from_disk():
-    if os.path.exists(DB_FILE):
+    if os.path.exists(HISTORY_FILE):
         try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return []
     return []
 
-def save_history_to_disk(history_data):
-    clean_history = []
-    for item in history_data:
-        clean_item = {
-            "id": item.get("id"),
-            "title": item.get("title"),
-            "file_type": item.get("file_type", ""),
-            "media_path": item.get("media_path", ""),
-            "summary_en": item.get("summary_en", ""),
-            "summary_vi": item.get("summary_vi", ""),
-            "chat_history": item.get("chat_history", []),
-            "data": [
-                {
-                    "speaker": row.get("speaker", ""),
-                    "english": row.get("english", ""),
-                    "vietnamese": row.get("vietnamese", ""),
-                    "audio_path": row.get("audio_path", "")
-                }
-                for row in item.get("data", [])
-            ]
-        }
-        clean_history.append(clean_item)
-
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(clean_history, f, ensure_ascii=False, indent=2)
-
-if 'history' not in st.session_state:
-    st.session_state['history'] = load_history_from_disk()
-
-if 'current_view' not in st.session_state:
-    if st.session_state['history']:
-        st.session_state['current_view'] = st.session_state['history'][-1]
-    else:
-        st.session_state['current_view'] = None
-
-if 'chat_messages' not in st.session_state:
-    if st.session_state['current_view']:
-        st.session_state['chat_messages'] = st.session_state['current_view'].get('chat_history', [])
-    else:
-        st.session_state['chat_messages'] = []
-
-st.title("🎬 Video Transcript & AI Companion")
-st.caption("Trích xuất âm thanh, tóm tắt song ngữ & Trợ lý học tập thông minh")
+if "history" not in st.session_state:
+    st.session_state.history = load_history_from_disk()
+if "current_transcript_data" not in st.session_state:
+    st.session_state.current_transcript_data = None
 
 with st.sidebar:
-    st.header("⚙️ Cấu hình")
-    api_key = st.text_input("Nhập Gemini API Key:", type="password")
-    whisper_model_size = st.selectbox("Mô hình Whisper:", ["base", "small", "medium"], index=2)
+    st.header("🔑 Cấu hình API")
+    user_api_key = st.text_input(
+        "Nhập Gemini API Key:",
+        type="password",
+        help="Lấy API key từ Google AI Studio"
+    )
+    
+    client = None
+    if user_api_key:
+        try:
+            client = genai.Client(api_key=user_api_key)
+            st.success("✅ Đã kết nối API Key")
+        except Exception as e:
+            st.error(f"Lỗi khởi tạo API: {e}")
+    else:
+        st.warning("⚠️ Vui lòng nhập API Key để sử dụng ứng dụng.")
 
     st.divider()
-    st.header("📜 Lịch sử bài học")
+    st.header("📚 Lịch sử bài học")
+    
+    if st.session_state.history:
+        if st.button("🗑️ Xóa toàn bộ lịch sử", use_container_width=True):
+            st.session_state.history = []
+            st.session_state.current_transcript_data = None
+            if os.path.exists(HISTORY_FILE):
+                os.remove(HISTORY_FILE)
+            st.rerun()
 
-    if st.button("➕ Tạo bài mới / Tải file"):
-        st.session_state['current_view'] = None
-        st.session_state['chat_messages'] = []
-        st.rerun()
-
-    st.divider()
-
-    if st.session_state['history']:
-        for idx, item in enumerate(st.session_state['history']):
-            col_title, col_del = st.columns([4, 1])
-
-            with col_title:
-                if st.button(f"📖 Bài {idx+1}: {item['title']}", key=f"hist_{idx}"):
-                    st.session_state['current_view'] = item
-                    st.session_state['chat_messages'] = item.get('chat_history', [])
+        for idx, hist in enumerate(st.session_state.history):
+            col_h1, col_h2 = st.columns([4, 1])
+            with col_h1:
+                if st.button(f"📄 {hist['title']}", key=f"hist_btn_{idx}", use_container_width=True):
+                    st.session_state.current_transcript_data = hist
                     st.rerun()
-
-            with col_del:
-                if st.button("❌", key=f"del_{idx}"):
-                    if st.session_state['current_view'] == item:
-                        st.session_state['current_view'] = None
-                        st.session_state['chat_messages'] = []
-
-                    if item.get("media_path") and os.path.exists(item["media_path"]):
-                        try:
-                            os.remove(item["media_path"])
-                        except Exception:
-                            pass
-
-                    for row in item.get("data", []):
-                        if row.get("audio_path") and os.path.exists(row["audio_path"]):
-                            try:
-                                os.remove(row["audio_path"])
-                            except Exception:
-                                pass
-
-                    st.session_state['history'].pop(idx)
-                    save_history_to_disk(st.session_state['history'])
-                    if st.session_state['history']:
-                        st.session_state['current_view'] = st.session_state['history'][-1]
+            with col_h2:
+                if st.button("❌", key=f"del_{idx}", help="Xóa bài này"):
+                    st.session_state.history.pop(idx)
+                    save_history_to_disk(st.session_state.history)
+                    if st.session_state.current_transcript_data and st.session_state.current_transcript_data.get("filename") == hist.get("filename"):
+                        st.session_state.current_transcript_data = None
                     st.rerun()
+    else:
+        st.caption("Chưa có lịch sử nào được lưu.")
 
-    st.divider()
-    if st.button("🗑️ Xóa toàn bộ lịch sử"):
-        st.session_state['history'] = []
-        st.session_state['current_view'] = None
-        st.session_state['chat_messages'] = []
-        if os.path.exists(DB_FILE):
-            os.remove(DB_FILE)
-        if os.path.exists(MEDIA_DIR):
-            for f in os.listdir(MEDIA_DIR):
-                try:
-                    os.remove(os.path.join(MEDIA_DIR, f))
-                except Exception:
-                    pass
-        st.rerun()
+st.title("🎙️ Video_Transcript")
 
-if not api_key:
-    st.info("Vui lòng nhập Gemini API Key ở thanh bên trái để tiếp tục.")
+if not user_api_key or client is None:
+    st.info("Vui lòng nhập Gemini API Key ở thanh bên (Sidebar) để tiếp tục.")
     st.stop()
 
 @st.cache_resource
-def load_whisper_model(model_size):
-    return WhisperModel(model_size, device="cpu", compute_type="int8")
+def load_whisper_model():
+    return whisper.load_model("small")
 
-client = genai.Client(api_key=api_key)
+model = load_whisper_model()
 
-# ---------------------------------------------------------
-# MÀN HÌNH 1: HIỂN THỊ BÀI HỌC KHI ĐÃ CHỌN HOẶC MỞ LẠI APP
-# ---------------------------------------------------------
-if st.session_state['current_view'] is not None:
-    view_data = st.session_state['current_view']
-
-    col_v1, col_v2 = st.columns([3, 1])
-    with col_v1:
-        st.info(f"📌 Đang xem bài: **{view_data['title']}**")
-
-    with col_v2:
-        def make_zip():
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                meta_data = {
-                    "id": view_data.get("id"),
-                    "title": view_data.get("title"),
-                    "file_type": view_data.get("file_type"),
-                    "summary_en": view_data.get("summary_en"),
-                    "summary_vi": view_data.get("summary_vi"),
-                    "chat_history": view_data.get("chat_history", []),
-                    "media_filename": os.path.basename(view_data.get("media_path", "")),
-                    "data": [
-                        {
-                            "speaker": r.get("speaker"),
-                            "english": r.get("english"),
-                            "vietnamese": r.get("vietnamese"),
-                            "audio_filename": os.path.basename(r.get("audio_path", ""))
-                        }
-                        for r in view_data.get("data", [])
-                    ]
-                }
-                zip_file.writestr("lesson.json", json.dumps(meta_data, ensure_ascii=False, indent=2))
-
-                m_path = view_data.get("media_path", "")
-                if m_path and os.path.exists(m_path):
-                    zip_file.write(m_path, arcname=os.path.basename(m_path))
-
-                for r in view_data.get("data", []):
-                    a_p = r.get("audio_path", "")
-                    if a_p and os.path.exists(a_p):
-                        zip_file.write(a_p, arcname=os.path.basename(a_p))
-
-            return zip_buffer.getvalue()
-
-        st.download_button(
-            label="📦 Xuất Zip bài học này",
-            data=make_zip(),
-            file_name=f"{view_data['title']}_package.zip",
-            mime="application/zip",
-            key=f"dl_btn_{view_data.get('id')}"
-        )
-
-    media_path = view_data.get("media_path", "")
-    if media_path and os.path.exists(media_path):
-        if view_data.get("file_type", "").startswith("video"):
-            st.video(media_path)
-        else:
-            st.audio(media_path)
-
-    st.divider()
-    st.subheader("📝 Tóm tắt hội thoại (Song ngữ)")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**🇬🇧 Tiếng Anh:**")
-        st.write(view_data.get("summary_en", ""))
-    with c2:
-        st.markdown("**🇻🇳 Tiếng Việt:**")
-        st.write(view_data.get("summary_vi", ""))
-
-    st.divider()
-    st.subheader("🔊 Trích xuất thoại & Bảng âm thanh thực hành")
-    for item in view_data.get('data', []):
-        col1, col2, col3, col4 = st.columns([1.5, 4, 4, 3])
-        with col1:
-            st.write(f"**{item.get('speaker', 'Thoại')}**")
-        with col2:
-            st.write(item.get('english', ''))
-        with col3:
-            st.write(item.get('vietnamese', ''))
-        with col4:
-            aud_p = item.get("audio_path", "")
-            if aud_p and os.path.exists(aud_p):
-                st.audio(aud_p, format="audio/wav")
-            else:
-                st.caption("Không tìm thấy âm thanh")
-
-    st.divider()
-    st.subheader("💬 AI Companion (Trợ lý hỏi đáp)")
-    for msg in st.session_state['chat_messages']:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    user_input = st.chat_input("Hỏi AI về từ vựng, ngữ pháp hoặc ngữ cảnh bài học này...")
-    if user_input:
-        st.session_state['chat_messages'].append({"role": "user", "content": user_input})
-
-        context = f"Nội dung hội thoại:\n{json.dumps([{k:v for k,v in r.items() if k!='audio_path'} for r in view_data['data']], ensure_ascii=False)}"
-        prompt_chat = f"{context}\n\nNgười dùng hỏi: {user_input}\nHãy trả lời chi tiết, dễ hiểu:"
-
-        res = client.models.generate_content(model='gemini-3.5-flash', contents=[prompt_chat])
-        st.session_state['chat_messages'].append({"role": "assistant", "content": res.text})
-
-        view_data['chat_history'] = st.session_state['chat_messages']
-        save_history_to_disk(st.session_state['history'])
-        st.rerun()
-
-    st.stop()
-
-# ---------------------------------------------------------
-# MÀN HÌNH 2: TẢI FILE MỚI HOẶC NHẬP FILE ZIP CHIA SẺ
-# ---------------------------------------------------------
-st.subheader("📥 Nhập bài học từ file (.zip)")
-shared_zip = st.file_uploader("Tải lên file bài học có đuôi .zip", type=["zip"], key="zip_import")
-
-if shared_zip:
-    if st.button("📥 Nạp bài học này vào Lịch sử"):
-        with zipfile.ZipFile(shared_zip, "r") as zf:
-            if "lesson.json" in zf.namelist():
-                meta_bytes = zf.read("lesson.json")
-                meta = json.loads(meta_bytes.decode("utf-8"))
-
-                for file_info in zf.infolist():
-                    if file_info.filename != "lesson.json":
-                        target_p = os.path.join(MEDIA_DIR, os.path.basename(file_info.filename))
-                        with open(target_p, "wb") as f_out:
-                            f_out.write(zf.read(file_info.filename))
-
-                new_media_p = os.path.join(MEDIA_DIR, meta.get("media_filename", ""))
-                new_data = []
-                for r in meta.get("data", []):
-                    new_data.append({
-                        "speaker": r.get("speaker"),
-                        "english": r.get("english"),
-                        "vietnamese": r.get("vietnamese"),
-                        "audio_path": os.path.join(MEDIA_DIR, r.get("audio_filename", ""))
-                    })
-
-                imported_item = {
-                    "id": meta.get("id"),
-                    "title": meta.get("title"),
-                    "file_type": meta.get("file_type"),
-                    "media_path": new_media_p,
-                    "summary_en": meta.get("summary_en"),
-                    "summary_vi": meta.get("summary_vi"),
-                    "data": new_data,
-                    "chat_history": meta.get("chat_history", [])
-                }
-
-                st.session_state['history'].append(imported_item)
-                st.session_state['current_view'] = imported_item
-                save_history_to_disk(st.session_state['history'])
-                st.success("Đã nạp bài học thành công!")
-                st.rerun()
-
-st.divider()
-st.subheader("📤 Xử lý bài mới từ Video/Audio gốc")
-uploaded_file = st.file_uploader(
-    "Tải lên file Video hoặc Audio (MP4, MP3, WAV, MOV):",
-    type=["mp4", "mp3", "wav", "mov"],
-    key="media_upload"
-)
+uploaded_file = st.file_uploader("Tải lên file âm thanh hoặc video", type=["mp3", "wav", "m4a", "mp4"])
 
 if uploaded_file:
-    file_bytes = uploaded_file.getvalue()
-    if uploaded_file.type.startswith("video"):
-        st.video(file_bytes)
-    else:
-        st.audio(file_bytes)
+    if (st.session_state.current_transcript_data is None) or (st.session_state.current_transcript_data.get("filename") != uploaded_file.name):
+        
+        existing_item = next((h for h in st.session_state.history if h["filename"] == uploaded_file.name), None)
+        
+        if existing_item:
+            st.session_state.current_transcript_data = existing_item
+        else:
+            import tempfile
+            from pydub import AudioSegment
 
-    if st.button("🚀 Bắt đầu trích xuất, Tóm tắt & Dịch"):
-        import time
-        item_id = str(int(time.time()))
+            with tempfile.TemporaryDirectory() as temp_dir:
+                input_path = os.path.join(temp_dir, uploaded_file.name)
+                with open(input_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
 
-        media_ext = os.path.splitext(uploaded_file.name)[1]
-        saved_media_path = os.path.join(MEDIA_DIR, f"{item_id}_orig{media_ext}")
-        with open(saved_media_path, "wb") as f:
-            f.write(file_bytes)
+                with st.spinner("1/3. Whisper đang ngắt từng phân đoạn thoại..."):
+                    raw_result = model.transcribe(
+                        input_path,
+                        language="en",
+                        temperature=0.0,
+                        condition_on_previous_text=False,
+                        no_speech_threshold=0.1
+                    )
+                    raw_segments = raw_result.get("segments", [])
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            input_path = os.path.join(temp_dir, f"input_media{media_ext}")
-            wav_path = os.path.join(temp_dir, "extracted_sound.wav")
+                sentences = [s['text'].strip() for s in raw_segments]
 
-            with open(input_path, "wb") as f:
-                f.write(file_bytes)
-
-            with st.spinner("1/4. Đang tách âm thanh gốc..."):
-                if uploaded_file.type.startswith("video"):
-                    video = VideoFileClip(input_path)
-                    video.audio.write_audiofile(wav_path, logger=None)
-                    video.close()
-                else:
-                    audio = AudioFileClip(input_path)
-                    audio.write_audiofile(wav_path, logger=None)
-                    audio.close()
-
-            with st.spinner(f"2/4. Whisper ({whisper_model_size}) đang phân tích mốc thời gian..."):
-                model = load_whisper_model(whisper_model_size)
-                segments, info = model.transcribe(
-                    wav_path,
-                    language="en",
-                    word_timestamps=True,
-                    no_speech_threshold=0.6,
-                    temperature=0.0
-                )
-                raw_segments = [
-                    {
-                        "start": seg.start,
-                        "end": seg.end,
-                        "text": seg.text,
-                        "words": [{"start": w.start, "end": w.end, "word": w.word} for w in seg.words] if seg.words else []
-                    }
-                    for seg in segments
-                ]
-
-            with st.spinner("3/4. Gemini đang gộp lượt nói, tóm tắt & dịch thuật..."):
-                transcript_text = "\n".join([f"[{s['start']:.2f}s - {s['end']:.2f}s]: {s['text'].strip()}" for s in raw_segments])
-
-                prompt = f"""
-Dưới đây là danh sách các câu thoại kèm mốc thời gian:
-{transcript_text}
+                with st.spinner("2/3. Gemini đang gán người nói và dịch thuật..."):
+                    prompt = f"""
+Dưới đây là danh sách các câu thoại tách theo mốc thời gian:
+{json.dumps(sentences, ensure_ascii=False, indent=2)}
 
 Nhiệm vụ:
-1. Gộp các câu thoại liên tiếp của CÙNG MỘT NGƯỜI NÓI thành 1 lượt nói.
-2. Tóm tắt nội dung chính bài hội thoại bằng cả tiếng Anh và tiếng Việt.
+1. Dịch từng câu sang tiếng Việt.
+2. Gán Speaker A hoặc Speaker B cho từng câu (luân phiên người nói theo ngữ cảnh).
+3. Tóm tắt nội dung bài học bằng tiếng Anh và tiếng Việt.
 
-Trả về duy nhất một JSON định dạng:
+Trả về duy nhất định dạng JSON thuần túy (không kèm markdown như ```json) với cấu trúc sau:
 {{
-  "summary_en": "Tóm tắt ngắn gọn bài hội thoại bằng tiếng Anh",
-  "summary_vi": "Tóm tắt ngắn gọn bài hội thoại bằng tiếng Việt",
-  "grouped_data": [
+  "summary_en": "Tóm tắt chi tiết nội dung bài học bằng tiếng Anh",
+  "summary_vi": "Tóm tắt chi tiết nội dung bài học bằng tiếng Việt",
+  "items": [
     {{
-      "speaker": "Speaker Name",
-      "start_id": 0,
-      "end_id": 2,
-      "english": "Văn bản tiếng Anh lượt nói",
-      "vietnamese": "Dịch tiếng Việt lượt nói"
+      "speaker": "Speaker A",
+      "english": "Nội dung câu",
+      "vietnamese": "Dịch tiếng Việt câu"
     }}
   ]
 }}
+Lưu ý: Số lượng phần tử trong mảng `items` phải ĐÚNG BẰNG số lượng câu thoại đầu vào ({len(sentences)}).
 """
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-3.6-flash',
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json"
+                            ),
+                        )
+                        clean_text = response.text.strip()
+                        if clean_text.startswith("```"):
+                            clean_text = clean_text.split("```")[1]
+                            if clean_text.startswith("json"):
+                                clean_text = clean_text[4:]
+                        res_json = json.loads(clean_text.strip())
+                        items = res_json.get("items", [])
+                    except Exception:
+                        res_json = {}
+                        items = []
 
-                response = client.models.generate_content(
-                    model='gemini-3.5-flash',
-                    contents=[prompt]
-                )
+                sum_en = res_json.get("summary_en", "").strip()
+                sum_vi = res_json.get("summary_vi", "").strip()
+                if not sum_en or not sum_vi:
+                    full_text_joined = " ".join(sentences)
+                    sum_en = f"Dialogue discussion covering: {full_text_joined[:150]}..."
+                    sum_vi = f"Nội dung hội thoại trao đổi về: {full_text_joined[:150]}..."
 
-                raw_text = response.text.strip()
-                if raw_text.startswith("```json"):
-                    raw_text = raw_text[7:]
-                if raw_text.startswith("```"):
-                    raw_text = raw_text[3:]
-                if raw_text.endswith("```"):
-                    raw_text = raw_text[:-3]
+                audio_segment = AudioSegment.from_file(input_path)
+                segments_data = []
+                
+                for idx, seg in enumerate(raw_segments):
+                    start_ms = max(0, int(seg["start"] * 1000) - 100)
+                    end_ms = int(seg["end"] * 1000)
+                    chunk = audio_segment[start_ms:end_ms]
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_chunk:
+                        chunk.export(tmp_chunk.name, format="mp3")
+                        tmp_chunk_path = tmp_chunk.name
+                    with open(tmp_chunk_path, "rb") as cf:
+                        chunk_bytes = cf.read()
+                    try:
+                        os.unlink(tmp_chunk_path)
+                    except Exception:
+                        pass
 
-                res_json = json.loads(raw_text.strip())
+                    speaker_label = items[idx]["speaker"] if idx < len(items) else f"Speaker {idx+1}"
+                    text_en = seg["text"].strip()
+                    text_vi = items[idx]["vietnamese"] if idx < len(items) else ""
+                    
+                    import base64
+                    b64_audio = base64.b64encode(chunk_bytes).decode('utf-8')
 
-            with st.spinner("4/4. Cắt & Lưu âm thanh từng đoạn..."):
-                full_audio = AudioFileClip(wav_path)
-                seg_map = {f"{id}": s for id, s in enumerate(raw_segments)}
-                final_data = []
+                    segments_data.append({
+                        "speaker": speaker_label,
+                        "english": text_en,
+                        "vietnamese": text_vi,
+                        "audio_b64": b64_audio
+                    })
 
-                for idx, group in enumerate(res_json.get("grouped_data", [])):
-                    s_id = group.get("start_id")
-                    e_id = group.get("end_id")
+                with open(input_path, "rb") as vf:
+                    video_bytes = vf.read()
+                
+                import base64
+                b64_video = base64.b64encode(video_bytes).decode('utf-8')
 
-                    if str(s_id) in seg_map and str(e_id) in seg_map:
-                        start_sec = max(0, seg_map[str(s_id)]["start"] - 0.02)
-                        end_sec = min(full_audio.duration, seg_map[str(e_id)]["end"] + 0.02)
-
-                        audio_save_path = os.path.join(MEDIA_DIR, f"{item_id}_chunk_{idx}.wav")
-                        chunk = full_audio.subclip(start_sec, end_sec)
-                        chunk.write_audiofile(audio_save_path, logger=None)
-
-                        final_data.append({
-                            "speaker": group.get("speaker", "Speaker"),
-                            "english": group.get("english", ""),
-                            "vietnamese": group.get("vietnamese", ""),
-                            "audio_path": audio_save_path
-                        })
-                full_audio.close()
-
-                new_item = {
-                    "id": item_id,
+                new_history_item = {
                     "title": uploaded_file.name,
-                    "file_type": uploaded_file.type,
-                    "media_path": saved_media_path,
-                    "summary_en": res_json.get("summary_en", ""),
-                    "summary_vi": res_json.get("summary_vi", ""),
-                    "data": final_data,
-                    "chat_history": []
+                    "filename": uploaded_file.name,
+                    "video_b64": b64_video,
+                    "summary_en": sum_en,
+                    "summary_vi": sum_vi,
+                    "segments": segments_data,
+                    "chat_messages": []
                 }
 
-                st.session_state['history'].append(new_item)
-                st.session_state['current_view'] = new_item
+                st.session_state.history.insert(0, new_history_item)
+                save_history_to_disk(st.session_state.history)
+                st.session_state.current_transcript_data = new_history_item
 
-                save_history_to_disk(st.session_state['history'])
-                st.rerun()
+if st.session_state.current_transcript_data:
+    data = st.session_state.current_transcript_data
+
+    st.subheader(f"📺 Video bài học: {data['title']}")
+    if "video_b64" in data and data["video_b64"]:
+        import base64
+        video_bytes_decoded = base64.b64decode(data["video_b64"])
+        st.video(video_bytes_decoded)
+    st.divider()
+
+    st.subheader("📝 Tóm tắt bài học")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown(f"**English Summary:**\n{data.get('summary_en', 'Đang cập nhật tóm tắt...')}")
+    with col2:
+        st.markdown(f"**Tóm tắt tiếng Việt:**\n{data.get('summary_vi', 'Đang cập nhật tóm tắt...')}")
+
+    st.divider()
+    st.subheader("🗣️ Chi tiết lượt thoại & Phát âm")
+
+    for seg in data["segments"]:
+        c1, c2, c3 = st.columns([1.2, 4.8, 3.0])
+        with c1:
+            st.markdown(f"**{seg['speaker']}**")
+        with c2:
+            st.markdown(f"{seg['english']}")
+            st.caption(f"{seg['vietnamese']}")
+        with c3:
+            if "audio_b64" in seg and seg["audio_b64"]:
+                import base64
+                audio_bytes_decoded = base64.b64decode(seg["audio_b64"])
+                st.audio(audio_bytes_decoded, format="audio/mp3")
+
+    st.divider()
+    st.subheader("🤖 AI Companion - Trợ lý giải đáp nội dung video")
+    st.caption("Hỏi đáp sâu hơn về từ vựng, ngữ pháp hoặc nội dung của bài học này.")
+
+    if "chat_messages" not in data:
+        data["chat_messages"] = []
+
+    for message in data["chat_messages"]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if user_query := st.chat_input("Nhập câu hỏi về bài học (ví dụ: Giải thích ngữ pháp câu số 2...)"):
+        data["chat_messages"].append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        with st.spinner("AI Companion đang phân tích và trả lời..."):
+            clean_segments_for_ai = [{"speaker": s["speaker"], "english": s["english"], "vietnamese": s["vietnamese"]} for s in data["segments"]]
+            full_context = f"Tóm tắt: {data.get('summary_en', '')}\nCác câu thoại:\n" + json.dumps(clean_segments_for_ai, ensure_ascii=False)
+            
+            try:
+                chat = client.chats.create(
+                    model="gemini-3.6-flash",
+                    config=types.GenerateContentConfig(
+                        system_instruction="Bạn là một trợ lý AI chuyên gia tiếng Anh. Hãy giải đáp thắc mắc của người học dựa trực tiếp vào nội dung bài học được cung cấp."
+                    )
+                )
+                chat.send_message(f"Ngữ cảnh bài học:\n{full_context}")
+                response = chat.send_message(user_query)
+                ai_reply = response.text
+            except Exception as e:
+                ai_reply = f"Lỗi phản hồi từ AI Companion: {e}"
+
+        data["chat_messages"].append({"role": "assistant", "content": ai_reply})
+        save_history_to_disk(st.session_state.history)
+        with st.chat_message("assistant"):
+            st.markdown(ai_reply)
